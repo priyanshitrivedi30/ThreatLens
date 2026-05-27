@@ -501,7 +501,7 @@ def cmd_report_html(events: list) -> Path:
 </html>"""
 
     out = REPORT_DIR / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-    out.write_text(html,encoding="utf-8")
+    out.write_text(html)
     return out
 
 

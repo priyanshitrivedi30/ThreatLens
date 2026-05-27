@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  soc-dashboard:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Get free key at https://www.abuseipdb.com/register
+      # Paste your key below or set in Railway environment variables
+      - ABUSEIPDB_KEY=${ABUSEIPDB_KEY:-}
+
+      # Kali: uncomment to use real auth.log
+      # - AUTH_LOG=/var/log/auth.log
+    volumes:
+      # Kali only: mounts real auth.log read-only
+      # Comment out if running on Windows or Railway
+      # - /var/log/auth.log:/var/log/auth.log:ro
+      - ./logs:/app/logs   # persist simulated log across restarts
+    restart: unless-stopped

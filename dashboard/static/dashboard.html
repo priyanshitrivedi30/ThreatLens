@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ThreatLens — SOC Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Fira+Code:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+
+<div class="corner corner-tl"></div>
+<div class="corner corner-tr"></div>
+<div class="corner corner-bl"></div>
+<div class="corner corner-br"></div>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">
+      <svg viewBox="0 0 38 38" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="19,2 36,10 36,28 19,36 2,28 2,10" stroke="#00c8ff" stroke-width="1.5" fill="none" opacity="0.8"/>
+        <polygon points="19,8 30,13 30,25 19,30 8,25 8,13" stroke="#00c8ff" stroke-width="0.5" fill="none" opacity="0.3"/>
+        <text x="19" y="23" text-anchor="middle" font-family="'Fira Code'" font-size="11" fill="#00c8ff" font-weight="500">TL</text>
+      </svg>
+    </div>
+    <div>
+      <div class="logo-text">THREAT<span>LENS</span></div>
+      <div class="logo-sub">SSH HONEYPOT · REAL-TIME SOC DASHBOARD</div>
+    </div>
+  </div>
+
+  <div class="header-center">
+    <div class="hstat">
+      <div class="hstat-val" id="h-total">—</div>
+      <div class="hstat-lbl">TOTAL HITS</div>
+    </div>
+    <div class="hdivider"></div>
+    <div class="hstat">
+      <div class="hstat-val warning" id="h-flagged">—</div>
+      <div class="hstat-lbl">FLAGGED</div>
+    </div>
+    <div class="hdivider"></div>
+    <div class="hstat">
+      <div class="hstat-val accent" id="h-unique">—</div>
+      <div class="hstat-lbl">UNIQUE IPs</div>
+    </div>
+  </div>
+
+  <div class="header-right">
+    <div class="src-tag" id="src-tag">// initializing...</div>
+    <div class="status-pill">
+      <div class="dot" id="live-dot"></div>
+      <span class="status-txt" id="status-txt">CONNECTING</span>
+    </div>
+    <span id="last-update">--:--:--</span>
+  </div>
+</header>
+
+<div class="toolbar">
+  <label>THRESHOLD</label>
+  <select id="threshold">
+    <option value="3">3 attempts</option>
+    <option value="5" selected>5 attempts</option>
+    <option value="10">10 attempts</option>
+    <option value="20">20 attempts</option>
+  </select>
+  <span class="tsep">|</span>
+  <label>API URL</label>
+  <input type="text" id="custom-url" placeholder="http://localhost:8000 (default)"/>
+  <button class="tbtn" onclick="manualRefresh()">↻ REFRESH</button>
+  <span class="tinfo">auto-refresh: 15s · SSE live feed active</span>
+  <div class="search-wrap">
+    <label>SEARCH IP</label>
+    <input type="text" id="ip-search" placeholder="filter by IP..." oninput="filterTable()"/>
+  </div>
+</div>
+
+<main>
+
+  <div class="stats-row">
+    <div class="scard red">
+      <div class="scard-icon">⚡</div>
+      <div class="scard-val" id="s-total">—</div>
+      <div class="scard-lbl">Total Events</div>
+      <div class="scard-sub">failed SSH logins</div>
+    </div>
+    <div class="scard orange">
+      <div class="scard-icon">🚨</div>
+      <div class="scard-val" id="s-flagged">—</div>
+      <div class="scard-lbl">Flagged IPs</div>
+      <div class="scard-sub">above threshold</div>
+    </div>
+    <div class="scard blue">
+      <div class="scard-icon">🌐</div>
+      <div class="scard-val" id="s-unique">—</div>
+      <div class="scard-lbl">Unique IPs</div>
+      <div class="scard-sub">distinct attackers</div>
+    </div>
+    <div class="scard green">
+      <div class="scard-icon">🎯</div>
+      <div class="scard-val" id="s-thresh">—</div>
+      <div class="scard-lbl">Threshold</div>
+      <div class="scard-sub">alert trigger level</div>
+    </div>
+    <div class="scard purple">
+      <div class="scard-icon">📡</div>
+      <div class="scard-val" id="s-live">0</div>
+      <div class="scard-lbl">Live Events</div>
+      <div class="scard-sub">SSE stream total</div>
+    </div>
+  </div>
+
+  <!-- ── ALERTS PANEL ─────────────────────────────── -->
+  <div class="alerts-panel" id="alerts-panel" style="display:none">
+    <div class="alerts-head">
+      <span class="alerts-title">🚨 FIRED ALERTS</span>
+      <span class="alerts-badge" id="alerts-badge">0</span>
+      <span class="alerts-sub">IPs that crossed CRITICAL threshold · desktop notifications sent</span>
+      <button class="alerts-dismiss" onclick="dismissAlerts()">✕ dismiss</button>
+    </div>
+    <div class="alerts-body" id="alerts-body"></div>
+  </div>
+
+  <div class="row-a">
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">SUSPICIOUS IPs</span>
+        <span class="panel-meta" id="ip-count">0 entries</span>
+      </div>
+      <div class="tbl-search">
+        <input type="text" id="tbl-ip-search" placeholder="filter IPs..." oninput="filterTable()"/>
+      </div>
+      <div class="tbl-wrap panel-body">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:36px">#</th>
+              <th>IP ADDRESS</th>
+              <th>ATTEMPTS</th>
+              <th style="width:40px">CNT</th>
+              <th style="width:120px">CTRY</th>
+              <th style="width:90px">STATUS</th>
+            </tr>
+          </thead>
+          <tbody id="ip-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">LIVE ATTACK FEED</span>
+        <span class="panel-meta success">● SSE</span>
+      </div>
+      <div class="feed-box panel-body" id="feed-box">
+        <div class="fline"><span class="fline-sys"># connecting to /api/feed...</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row-b">
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">HOURLY ATTACK TIMELINE</span>
+        <span class="panel-meta">24h window</span>
+      </div>
+      <div class="timeline-wrap">
+        <svg id="timeline-svg" viewBox="0 0 700 150" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="grad-area" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#00c8ff" stop-opacity="0.35"/>
+              <stop offset="100%" stop-color="#00c8ff" stop-opacity="0"/>
+            </linearGradient>
+            <linearGradient id="grad-danger" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#ff2d55" stop-opacity="0.5"/>
+              <stop offset="100%" stop-color="#ff2d55" stop-opacity="0"/>
+            </linearGradient>
+            <filter id="glow-line">
+              <feGaussianBlur stdDeviation="2" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="glow-dot">
+              <feGaussianBlur stdDeviation="3" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <g id="tl-grid"></g>
+          <path id="tl-area" fill="url(#grad-area)" opacity="0.8"/>
+          <path id="tl-line" fill="none" stroke="#00c8ff" stroke-width="1.5" filter="url(#glow-line)"/>
+          <g id="tl-dots"></g>
+          <g id="tl-labels"></g>
+          <line id="tl-hline" x1="0" y1="0" x2="0" y2="150" stroke="var(--border2)" stroke-width="1" stroke-dasharray="3,3" opacity="0" pointer-events="none"/>
+          <g id="tl-hits"></g>
+        </svg>
+        <div class="tl-tooltip" id="tl-tooltip"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">TOP USERNAMES</span>
+        <span class="panel-meta">most targeted</span>
+      </div>
+      <div class="cred-box panel-body" id="user-box"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">GEO BREAKDOWN</span>
+        <span class="panel-meta">top attack origins</span>
+      </div>
+      <div class="cred-box panel-body" id="geo-box">
+        <div class="geo-empty">Loading geo data…</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">DETECTION LOG</span>
+        <span class="panel-meta">stdout</span>
+      </div>
+      <div class="log-box" id="log-box">
+        <span class="ld"># waiting for data...</span>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer>THREATLENS v3.0 · FASTAPI + SSE + PARAMIKO · REAL-TIME SSH BRUTE-FORCE ANALYSIS · EDUCATIONAL USE ONLY</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,2 +1,13 @@
+# ThreatLens — unified requirements
+
+# CLI Analyzer
 paramiko>=3.4.0
 rich>=13.7.0
+
+# SOC Dashboard
+fastapi>=0.110.0
+uvicorn>=0.29.0
+httpx>=0.27.0
+
+# Geolocation (ip-api.com via httpx — no extra lib needed)
+# Alerting (stdlib smtplib + httpx for Slack — no extra lib needed)
