@@ -32,6 +32,9 @@ from fastapi.staticfiles import StaticFiles
 
 import geolocation as geo
 from alerting import check_and_fire, ALERTED_FILE, ALERT_THRESHOLD
+from dotenv import load_dotenv
+
+load_dotenv(ROOT / ".env")
 
 ABUSEIPDB_KEY = os.getenv("ABUSEIPDB_KEY", "")
 SHARED_LOG    = ROOT / "logs" / "sessions.jsonl"
@@ -181,13 +184,51 @@ def alert_worker():
 
 
 # ── AbuseIPDB enrichment ───────────────────────────────────────────────────────
+# Results are cached in logs/abuse_cache.json so each IP only costs 1 API call.
+# Free tier allows 1,000 checks/day; cached IPs are never re-fetched.
+
+ABUSE_CACHE_FILE = ROOT / "logs" / "abuse_cache.json"
+_abuse_cache: dict[str, dict] = {}
+_abuse_lock = threading.Lock()
+
+
+def _load_abuse_cache():
+    global _abuse_cache
+    if ABUSE_CACHE_FILE.exists():
+        try:
+            _abuse_cache = json.loads(ABUSE_CACHE_FILE.read_text())
+        except Exception:
+            _abuse_cache = {}
+
+
+def _save_abuse_cache():
+    ABUSE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ABUSE_CACHE_FILE.write_text(json.dumps(_abuse_cache, indent=2))
+
 
 async def fetch_abuse_scores(ips: list[str]) -> dict[str, dict]:
+    """
+    Returns abuse scores for the given IPs.
+    - Hits cache first; only queries AbuseIPDB for IPs not yet cached.
+    - Silently returns empty dict if ABUSEIPDB_KEY is not set.
+    - Caps live requests at 50 per call to stay within free-tier daily limits.
+    """
     if not ABUSEIPDB_KEY or not ips:
         return {}
-    scores = {}
-    async with httpx.AsyncClient(timeout=6) as client:
-        for ip in ips[:20]:
+
+    with _abuse_lock:
+        if not _abuse_cache:
+            _load_abuse_cache()
+        # Serve cached results immediately
+        results = {ip: _abuse_cache[ip] for ip in ips if ip in _abuse_cache}
+        uncached = [ip for ip in ips if ip not in _abuse_cache]
+
+    if not uncached:
+        return results
+
+    # Fetch up to 50 uncached IPs (free tier: 1,000/day)
+    async with httpx.AsyncClient(timeout=8) as client:
+        for ip in uncached[:50]:
             try:
                 r = await client.get(
                     "https://api.abuseipdb.com/api/v2/check",
@@ -196,13 +237,25 @@ async def fetch_abuse_scores(ips: list[str]) -> dict[str, dict]:
                 )
                 if r.status_code == 200:
                     d = r.json().get("data", {})
-                    scores[ip] = {
+                    entry = {
                         "abuse_score":   d.get("abuseConfidenceScore", 0),
                         "total_reports": d.get("totalReports", 0),
+                        "domain":        d.get("domain", ""),
+                        "isp":           d.get("isp", ""),
+                        "cached_at":     datetime.now().strftime("%Y-%m-%d"),
                     }
-            except Exception:
-                pass
-    return scores
+                    with _abuse_lock:
+                        _abuse_cache[ip] = entry
+                        _save_abuse_cache()
+                    results[ip] = entry
+                elif r.status_code == 429:
+                    # Rate limited — stop and return what we have
+                    print("  [abuseipdb] Rate limited — stopping early")
+                    break
+            except Exception as e:
+                print(f"  [abuseipdb] Error for {ip}: {e}")
+
+    return results
 
 
 def build_response(log: dict, abuse: dict, threshold: int, source: str) -> dict:
@@ -299,13 +352,16 @@ async def live_feed():
 
 @app.get("/api/health")
 async def health():
+    with _abuse_lock:
+        abuse_cached = len(_abuse_cache)
     return {
-        "status":       "online",
-        "honeypot_log": SHARED_LOG.exists(),
-        "geo_cached":   len(geo.get_all()),
-        "abuseipdb":    bool(ABUSEIPDB_KEY),
-        "slack_alerts": bool(os.getenv("SLACK_WEBHOOK_URL")),
-        "time":         datetime.now().isoformat(),
+        "status":        "online",
+        "honeypot_log":  SHARED_LOG.exists(),
+        "geo_cached":    len(geo.get_all()),
+        "abuseipdb":     bool(ABUSEIPDB_KEY),
+        "abuse_cached":  abuse_cached,
+        "slack_alerts":  bool(os.getenv("SLACK_WEBHOOK_URL")),
+        "time":          datetime.now().isoformat(),
     }
 
 
@@ -313,6 +369,13 @@ async def health():
 async def startup():
     threading.Thread(target=background_worker, daemon=True).start()
     threading.Thread(target=alert_worker,      daemon=True).start()
+
+    _load_abuse_cache()
+    
+    if os.getenv("AUTO_CLEAR_ALERTS", "false").lower() == "true":
+        if (ROOT / "logs" / "alerted.json").exists():
+            (ROOT / "logs" / "alerted.json").unlink()
+            print("  Alerts cleared on startup")   
 
     log = parse_shared_log()
     if log:
@@ -324,6 +387,8 @@ async def startup():
     print("  ThreatLens SOC Dashboard v3.0")
     print(f"  Honeypot log  : {'✅ FOUND' if SHARED_LOG.exists() else '⚠️  not found'}")
     print(f"  AbuseIPDB     : {'✅ SET' if ABUSEIPDB_KEY else '⚠️  not set'}")
+    with _abuse_lock:
+        print(f"  Abuse cache   : {len(_abuse_cache)} IPs cached")
     print(f"  Slack alerts  : {'✅ SET' if os.getenv('SLACK_WEBHOOK_URL') else '⚠️  not set'}")
     print(f"  Desktop notifs: ✅ handled by browser Notification API")
     print(f"  Dashboard     : http://localhost:8000")

@@ -287,7 +287,7 @@ def cmd_timeline(events: list, hours: int = 12, buckets: int = 24):
         threshold = max_count * row / bar_height
         for c in counts:
             if c >= threshold:
-                intensity = c / max_count
+                intensity = c / max_count if max_count > 0 else 0
                 if intensity > 0.75:   color = "[red]"
                 elif intensity > 0.4:  color = "[yellow]"
                 else:                  color = "[cyan]"
@@ -501,7 +501,7 @@ def cmd_report_html(events: list) -> Path:
 </html>"""
 
     out = REPORT_DIR / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-    out.write_text(html)
+    out.write_text(html,encoding="utf-8")
     return out
 
 
